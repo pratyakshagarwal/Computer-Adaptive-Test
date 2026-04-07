@@ -42,7 +42,7 @@ class Question_Schema(BaseModel):
 class EvalScores(BaseModel):
     question_clarity: int = Field(ge=1, le=10)
     answer_correctness: int = Field(ge=1, le=10)
-    distractor_quality: int = Field(ge=1, le=10)   # plausibility of wrong opts
+    distractor_quality: int = Field(ge=1, le=10)   
     difficulty_match: int = Field(ge=1, le=10)
     explanation_quality: int = Field(ge=1, le=10)
     tag_accuracy: int = Field(ge=1, le=10)
