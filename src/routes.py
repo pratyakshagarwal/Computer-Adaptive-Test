@@ -2,139 +2,23 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 import uuid, copy
-from datetime import datetime
 
-from sqlalchemy import create_engine, Column, String, Float, TIMESTAMP, Boolean
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import create_engine
 
-from src.llm_questions import generate_question_node
+
+from src.llm_questions import build_graph
 from src.llm_insight import generate_plan
 from src.irt_lite import IRTEngine
-
-# -------------------------
-# DB Setup
-# -------------------------
-DATABASE_URL = "postgresql://postgres:Sid1002@localhost:5432/postgres"
-
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine)
-Base = declarative_base()
-
-# -------------------------
-# DB Dependency
-# -------------------------
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# -------------------------
-# DB Models
-# -------------------------
-class SessionModel(Base):
-    __tablename__ = "sessions"
-
-    id = Column(String, primary_key=True, index=True)
-    user_hash = Column(String, index=True)
-
-    subjects = Column(JSONB)
-    topics = Column(JSONB)
-    exam = Column(String, nullable=True)
-
-    difficulty = Column(Float, default=0.5)
-    theta = Column(Float, default=0.5)
-    topic_distribution = Column(JSONB)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+from src.db_models import get_db, SessionModel, QuestionModel, AttemptModel, ModelInsight, Session
+from src.schemas import SessionCreate, GenerateInsightRequest, GenerateQuestionRequest, QuestionResponse, SubmitAnswerRequest
 
 
-class QuestionModel(Base):
-    __tablename__ = "questions"
-
-    id = Column(String, primary_key=True, index=True)
-    session_id = Column(String, index=True)  # critical for queries
-
-    q_text = Column(String)
-    options = Column(JSONB)
-    solution = Column(String)
-    explanation = Column(String)
-
-    difficulty = Column(Float)
-
-    subject = Column(String)
-    topic = Column(String)
-    sub_topic = Column(String)
-
-    created_at = Column(TIMESTAMP, default=datetime.utcnow)
-
-class AttemptModel(Base):
-    __tablename__ = "attempts"
-
-    id = Column(String, primary_key=True)
-    session_id = Column(String, index=True)
-    question_id = Column(String, index=True)
-
-    user_answer = Column(String)
-    is_correct = Column(Boolean)
-
-    created_at = Column(TIMESTAMP, default=datetime.utcnow)
-
-class ModelInsight(Base):
-    __tablename__ = 'insight'
-
-    id = Column(String, primary_key=True)
-    session_id = Column(String, index=True)
-    weak_topics = Column(JSONB)
-    response = Column(String)
-
-# -------------------------
-# Create Tables
-# -------------------------
-Base.metadata.create_all(bind=engine)
-
-# -------------------------
-# Schemas
-# -------------------------
-class SessionCreate(BaseModel):
-    subjects: List[str] = Field(min_length=1)
-    topics: List[str] = Field(min_length=1)
-    exam: Optional[str] = None
-
-
-class GenerateQuestionRequest(BaseModel): session_id: str
-class GenerateInsightRequest(BaseModel): session_id: str
-
-
-class QuestionResponse(BaseModel):
-    id: str
-    q_text: str
-    options: Dict[str, str]
-    solution: str
-    explanation: str
-    difficulty: float
-    subject: Optional[str]
-    topic: Optional[str]
-    sub_topic: Optional[str]
-
-    class Config:
-        from_attributes = True
-
-
-class SubmitAnswerRequest(BaseModel):
-    session_id: str
-    question_id: str
-    user_answer: str
-
-# -------------------------
 # Router
-# -------------------------
 router = APIRouter()
+graph = build_graph()
 
 # -------------------------
 # Endpoints
-# -------------------------
 @router.post("/start-session")
 def start_session(data: SessionCreate, db: Session = Depends(get_db)):
     user_hash = str(uuid.uuid4())
@@ -173,11 +57,13 @@ def generate_question(data: GenerateQuestionRequest, db: Session = Depends(get_d
         "Topics": session.topics,  
         "Exam": session.exam,
         "Difficulty": session.difficulty,
-        "History": session.topic_distribution
+        "Q": None,
+        "History": session.topic_distribution,
+        "Evaluator_Feedback": ""
     }
 
     try:
-        q_state = generate_question_node(state)
+        q_state = graph.invoke(state)['Q']
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM generation failed: {str(e)}")
 
